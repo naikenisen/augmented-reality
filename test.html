@@ -1,0 +1,36 @@
+
+<!doctype html>
+<html lang="fr">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+    <style>
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            overflow: hidden
+        }
+    </style>
+</head>
+
+<body>
+    <a-scene mindar-image="imageTargetSrc: targets.mind;" vr-mode-ui="enabled: false"
+        device-orientation-permission-ui="enabled: false">
+        <a-assets>
+            <a-asset-item id="model_gltf" src="model.glb"></a-asset-item>
+        </a-assets>
+
+        <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+        <!-- index=0 : 1ère image cible dans targets.mind -->
+        <a-entity mindar-image-target="targetIndex: 0">
+            <a-gltf-model src="#model_gltf" position="0 0 0" rotation="0 0 0" scale="1 1 1"></a-gltf-model>
+        </a-entity>
+    </a-scene>
+</body>
+
+</html>
