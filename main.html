@@ -15,16 +15,358 @@
   </div>
 
   <div id="ar-container" style="display:none;width:100%;height:100%;">
-    <a-scene id="ar-scene" embedded arjs>
-      <a-marker preset="hiro">
-        <a-box position="0 0.5 0" material="color: red;"></a-box>
+    <a-scene id="ar-scene" embedded arjs renderer="alpha: true; antialias: true;" vr-mode-ui="enabled: false" fog="type: exponential; color: #dbe9ff; density: 0.022;">
+      <a-marker id="hiro-marker" preset="hiro">
+        <a-entity id="source-cell" position="0 0.55 0"></a-entity>
       </a-marker>
+      <a-entity id="background-cells"></a-entity>
+      <a-entity light="type: ambient; color: #ffe8bf; intensity: 0.9"></a-entity>
+      <a-entity light="type: directional; color: #fff8de; intensity: 0.55" position="-1.4 2.2 1.2"></a-entity>
+      <a-entity light="type: point; color: #8fc1ff; intensity: 0.7; distance: 7" position="1.3 1.5 1.3"></a-entity>
       <a-entity camera></a-entity>
     </a-scene>
   </div>
 
   <script>
     let selectedDeviceId = null;
+    let simulationStarted = false;
+    let exosomeTimer = null;
+    const targetCells = [];
+    const exosomes = [];
+    const sourceCellProfile = {
+      radius: 0.52
+    };
+
+    function randomRange(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function randomUnitVector() {
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const x = Math.sin(phi) * Math.cos(theta);
+      const y = Math.sin(phi) * Math.sin(theta);
+      const z = Math.cos(phi);
+      return { x, y, z };
+    }
+
+    function buildCell(cellEntity, options = {}) {
+      const radius = options.radius || 0.5;
+      const bumps = options.bumps || 30;
+      const bumpScaleMin = options.bumpScaleMin || 0.03;
+      const bumpScaleMax = options.bumpScaleMax || 0.08;
+      const membraneThickness = options.membraneThickness || 0.035;
+
+      cellEntity.setAttribute('data-cell-radius', String(radius));
+
+      const membraneOuter = document.createElement('a-sphere');
+      membraneOuter.setAttribute('radius', radius);
+      membraneOuter.setAttribute(
+        'material',
+        'color: #f7db63; transparent: true; opacity: 0.44; roughness: 0.48; metalness: 0.02; side: double;'
+      );
+      membraneOuter.setAttribute(
+        'animation__membrane',
+        `property: scale; from: 1 1 1; to: ${randomRange(1.02, 1.05).toFixed(3)} ${randomRange(1.01, 1.04).toFixed(3)} ${randomRange(1.02, 1.05).toFixed(3)}; dur: ${Math.floor(randomRange(1500, 2300))}; dir: alternate; loop: true; easing: easeInOutSine;`
+      );
+      cellEntity.appendChild(membraneOuter);
+
+      const membraneInner = document.createElement('a-sphere');
+      membraneInner.setAttribute('radius', Math.max(radius - membraneThickness, radius * 0.9));
+      membraneInner.setAttribute(
+        'material',
+        'color: #ffe886; transparent: true; opacity: 0.3; roughness: 0.7; metalness: 0.01; side: double;'
+      );
+      cellEntity.appendChild(membraneInner);
+
+      const cytoplasm = document.createElement('a-sphere');
+      cytoplasm.setAttribute('radius', radius * 0.84);
+      cytoplasm.setAttribute(
+        'material',
+        'color: #fbeea2; transparent: true; opacity: 0.18; roughness: 0.95; metalness: 0;'
+      );
+      cellEntity.appendChild(cytoplasm);
+
+      const nucleus = document.createElement('a-sphere');
+      const nucleusOffset = randomUnitVector();
+      nucleus.setAttribute('radius', radius * 0.34);
+      nucleus.setAttribute(
+        'position',
+        `${(nucleusOffset.x * radius * 0.17).toFixed(3)} ${(nucleusOffset.y * radius * 0.17).toFixed(3)} ${(nucleusOffset.z * radius * 0.17).toFixed(3)}`
+      );
+      nucleus.setAttribute(
+        'material',
+        'color: #f0c62f; transparent: true; opacity: 0.38; roughness: 0.55; metalness: 0.02;'
+      );
+      cellEntity.appendChild(nucleus);
+
+      const nucleolus = document.createElement('a-sphere');
+      nucleolus.setAttribute('radius', radius * 0.12);
+      nucleolus.setAttribute('position', `${(radius * 0.05).toFixed(3)} ${(radius * 0.03).toFixed(3)} ${(radius * -0.04).toFixed(3)}`);
+      nucleolus.setAttribute(
+        'material',
+        'color: #e1b016; transparent: true; opacity: 0.55; roughness: 0.6; metalness: 0.01;'
+      );
+      nucleus.appendChild(nucleolus);
+
+      for (let i = 0; i < 10; i++) {
+        const vesicle = document.createElement('a-sphere');
+        const dir = randomUnitVector();
+        const r = randomRange(radius * 0.03, radius * 0.055);
+        const dist = randomRange(radius * 0.15, radius * 0.55);
+        vesicle.setAttribute('radius', r);
+        vesicle.setAttribute(
+          'position',
+          `${(dir.x * dist).toFixed(3)} ${(dir.y * dist).toFixed(3)} ${(dir.z * dist).toFixed(3)}`
+        );
+        vesicle.setAttribute(
+          'material',
+          'color: #fff5bf; transparent: true; opacity: 0.2; roughness: 1; metalness: 0;'
+        );
+        cellEntity.appendChild(vesicle);
+      }
+
+      for (let i = 0; i < bumps; i++) {
+        const dir = randomUnitVector();
+        const bumpRadius = radius * randomRange(bumpScaleMin, bumpScaleMax);
+        const distance = radius + bumpRadius * randomRange(0.28, 0.7);
+
+        const bump = document.createElement('a-sphere');
+        bump.setAttribute('radius', bumpRadius);
+        bump.setAttribute(
+          'position',
+          `${(dir.x * distance).toFixed(3)} ${(dir.y * distance).toFixed(3)} ${(dir.z * distance).toFixed(3)}`
+        );
+        bump.setAttribute(
+          'material',
+          'color: #ebc637; transparent: true; opacity: 0.63; roughness: 0.65; metalness: 0.01;'
+        );
+        cellEntity.appendChild(bump);
+      }
+    }
+
+    function getWorldPosition(entity) {
+      const vec = new THREE.Vector3();
+      entity.object3D.getWorldPosition(vec);
+      return vec;
+    }
+
+    function pulseCell(cell) {
+      cell.setAttribute(
+        'animation__pulse',
+        'property: scale; from: 1 1 1; to: 1.14 1.14 1.14; dur: 320; dir: alternate; loop: 2; easing: easeOutSine;'
+      );
+    }
+
+    function createFusionGlow(position) {
+      const scene = document.getElementById('ar-scene');
+      const glow = document.createElement('a-sphere');
+      glow.setAttribute('radius', 0.04);
+      glow.setAttribute('position', `${position.x.toFixed(3)} ${position.y.toFixed(3)} ${position.z.toFixed(3)}`);
+      glow.setAttribute(
+        'material',
+        'color: #9fd0ff; transparent: true; opacity: 0.48; roughness: 0.18; metalness: 0.06; side: double;'
+      );
+      glow.setAttribute('animation__expand', 'property: scale; from: 1 1 1; to: 3.6 3.6 3.6; dur: 260; easing: easeOutQuad;');
+      glow.setAttribute('animation__fade', 'property: material.opacity; from: 0.48; to: 0; dur: 260; easing: linear;');
+      scene.appendChild(glow);
+      setTimeout(() => {
+        if (glow.parentNode) {
+          glow.parentNode.removeChild(glow);
+        }
+      }, 320);
+    }
+
+    function spawnBackgroundCells() {
+      const container = document.getElementById('background-cells');
+
+      for (let i = 0; i < 7; i++) {
+        const cell = document.createElement('a-entity');
+        const x = randomRange(-2.7, 2.7);
+        const y = randomRange(0.25, 1.65);
+        const z = randomRange(-5.3, -1.9);
+        const radius = randomRange(0.23, 0.36);
+
+        cell.setAttribute('position', `${x} ${y} ${z}`);
+        cell.setAttribute(
+          'animation__float',
+          `property: position; to: ${x.toFixed(3)} ${(y + randomRange(0.06, 0.14)).toFixed(3)} ${(z + randomRange(-0.14, 0.14)).toFixed(3)}; dur: ${Math.floor(randomRange(2400, 4200))}; dir: alternate; loop: true; easing: easeInOutSine;`
+        );
+        cell.setAttribute(
+          'animation__drift',
+          `property: rotation; to: ${randomRange(-8, 8).toFixed(2)} ${randomRange(-12, 12).toFixed(2)} ${randomRange(-6, 6).toFixed(2)}; dur: ${Math.floor(randomRange(3500, 5600))}; dir: alternate; loop: true; easing: easeInOutSine;`
+        );
+
+        buildCell(cell, {
+          radius,
+          bumps: 16 + Math.floor(Math.random() * 12),
+          bumpScaleMin: 0.03,
+          bumpScaleMax: 0.07,
+          membraneThickness: 0.03
+        });
+        container.appendChild(cell);
+        targetCells.push(cell);
+      }
+    }
+
+    function createExosomeEntity() {
+      const exosome = document.createElement('a-entity');
+
+      const shell = document.createElement('a-sphere');
+      shell.setAttribute('radius', 0.053);
+      shell.setAttribute(
+        'material',
+        'color: #68b5ff; transparent: true; opacity: 0.45; roughness: 0.2; metalness: 0.12; side: double;'
+      );
+      shell.setAttribute(
+        'animation__pulse',
+        `property: scale; from: 1 1 1; to: ${randomRange(1.06, 1.14).toFixed(3)} ${randomRange(1.05, 1.12).toFixed(3)} ${randomRange(1.06, 1.14).toFixed(3)}; dur: ${Math.floor(randomRange(500, 900))}; dir: alternate; loop: true; easing: easeInOutSine;`
+      );
+      exosome.appendChild(shell);
+
+      const core = document.createElement('a-sphere');
+      core.setAttribute('radius', 0.028);
+      core.setAttribute(
+        'material',
+        'color: #9ad6ff; transparent: true; opacity: 0.38; roughness: 0.45; metalness: 0.08;'
+      );
+      exosome.appendChild(core);
+
+      return { exosome, shell };
+    }
+
+    function spawnExosome() {
+      const marker = document.getElementById('hiro-marker');
+      if (!marker || !marker.object3D.visible || targetCells.length === 0) {
+        return;
+      }
+
+      const sourceCell = document.getElementById('source-cell');
+      const targetCell = targetCells[Math.floor(Math.random() * targetCells.length)];
+      const sourceWorldPos = getWorldPosition(sourceCell);
+      const targetPos = getWorldPosition(targetCell);
+
+      const launchDir = targetPos.clone().sub(sourceWorldPos).normalize();
+      launchDir.x += randomRange(-0.22, 0.22);
+      launchDir.y += randomRange(-0.16, 0.16);
+      launchDir.z += randomRange(-0.22, 0.22);
+      launchDir.normalize();
+
+      const spawnPos = sourceWorldPos.clone().add(launchDir.multiplyScalar(sourceCellProfile.radius * 1.04));
+
+      const exosomeParts = createExosomeEntity();
+      const exosome = exosomeParts.exosome;
+      const shell = exosomeParts.shell;
+
+      const targetRadius = parseFloat(targetCell.getAttribute('data-cell-radius')) || 0.28;
+
+      const scene = document.getElementById('ar-scene');
+      scene.appendChild(exosome);
+      exosome.object3D.position.copy(spawnPos);
+
+      exosomes.push({
+        el: exosome,
+        shell,
+        target: targetCell,
+        targetRadius,
+        speed: randomRange(0.62, 1.02),
+        phase: randomRange(0, Math.PI * 2),
+        age: 0,
+        state: 'travel',
+        fusionProgress: 0,
+        wobble: randomRange(0.7, 1.25)
+      });
+    }
+
+    function updateExosomes(deltaSec) {
+      for (let i = exosomes.length - 1; i >= 0; i--) {
+        const item = exosomes[i];
+        if (!item.el.parentNode) {
+          exosomes.splice(i, 1);
+          continue;
+        }
+
+        item.age += deltaSec;
+        if (item.age > 11) {
+          if (item.el.parentNode) {
+            item.el.parentNode.removeChild(item.el);
+          }
+          exosomes.splice(i, 1);
+          continue;
+        }
+
+        const targetPos = getWorldPosition(item.target);
+        const pos = item.el.object3D.position;
+        const dir = targetPos.clone().sub(pos);
+        const distance = dir.length();
+
+        if (item.state === 'travel' && distance < item.targetRadius + 0.12) {
+          item.state = 'fusion';
+        }
+
+        if (item.state === 'fusion') {
+          if (distance < item.targetRadius * 0.18 || item.fusionProgress > 1) {
+            createFusionGlow(targetPos);
+            pulseCell(item.target);
+            if (item.el.parentNode) {
+              item.el.parentNode.removeChild(item.el);
+            }
+            exosomes.splice(i, 1);
+            continue;
+          }
+
+          item.fusionProgress += deltaSec * 2.6;
+          dir.normalize();
+          pos.add(dir.multiplyScalar(item.speed * 1.35 * deltaSec));
+
+          const fusionScale = Math.max(0.2, 1 - item.fusionProgress * 0.86);
+          item.el.object3D.scale.set(fusionScale, fusionScale, fusionScale);
+
+          const opacity = Math.max(0.05, 0.45 - item.fusionProgress * 0.38);
+          item.shell.setAttribute(
+            'material',
+            `color: #68b5ff; transparent: true; opacity: ${opacity.toFixed(3)}; roughness: 0.2; metalness: 0.12; side: double;`
+          );
+          continue;
+        }
+
+        dir.normalize();
+        const step = dir.multiplyScalar(item.speed * deltaSec);
+        step.y += Math.sin(item.age * 9.5 + item.phase) * 0.0048 * item.wobble;
+        step.x += Math.cos(item.age * 7.2 + item.phase * 0.7) * 0.0032 * item.wobble;
+        step.z += Math.sin(item.age * 8.4 + item.phase * 1.2) * 0.0022;
+        pos.add(step);
+      }
+    }
+
+    function startSimulation() {
+      if (simulationStarted) {
+        return;
+      }
+
+      simulationStarted = true;
+
+      const sourceCell = document.getElementById('source-cell');
+      buildCell(sourceCell, {
+        radius: sourceCellProfile.radius,
+        bumps: 42,
+        bumpScaleMin: 0.03,
+        bumpScaleMax: 0.09,
+        membraneThickness: 0.038
+      });
+
+      spawnBackgroundCells();
+      exosomeTimer = setInterval(spawnExosome, 420);
+
+      let previousTime = performance.now();
+      function animate(now) {
+        const deltaSec = Math.min((now - previousTime) / 1000, 0.05);
+        previousTime = now;
+        updateExosomes(deltaSec);
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    }
 
     // Demande la permission caméra puis liste les périphériques
     navigator.mediaDevices.getUserMedia({ video: true }).then(() => {
@@ -46,6 +388,7 @@
       const scene = document.getElementById('ar-scene');
       scene.setAttribute('arjs', 'sourceType: webcam; deviceId: ' + selectedDeviceId + ';');
       document.getElementById('ar-container').style.display = 'block';
+      startSimulation();
     }
   </script>
 
