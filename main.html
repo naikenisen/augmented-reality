@@ -15,14 +15,16 @@
   </div>
 
   <div id="ar-container" style="display:none;width:100%;height:100%;">
-    <a-scene id="ar-scene" embedded arjs renderer="alpha: true; antialias: true;" vr-mode-ui="enabled: false" fog="type: exponential; color: #dbe9ff; density: 0.022;">
+    <a-scene id="ar-scene" embedded arjs renderer="alpha: true; antialias: true;" vr-mode-ui="enabled: false" fog="type: exponential; color: #4e090c; density: 0.03;">
       <a-marker id="hiro-marker" preset="hiro">
         <a-entity id="source-cell" position="0 0.55 0"></a-entity>
       </a-marker>
+      <a-entity id="bloodstream"></a-entity>
       <a-entity id="background-cells"></a-entity>
-      <a-entity light="type: ambient; color: #ffe8bf; intensity: 0.9"></a-entity>
-      <a-entity light="type: directional; color: #fff8de; intensity: 0.55" position="-1.4 2.2 1.2"></a-entity>
-      <a-entity light="type: point; color: #8fc1ff; intensity: 0.7; distance: 7" position="1.3 1.5 1.3"></a-entity>
+      <a-entity id="immune-actors"></a-entity>
+      <a-entity light="type: ambient; color: #ffd6c8; intensity: 0.85"></a-entity>
+      <a-entity light="type: directional; color: #fff0e8; intensity: 0.45" position="-1.4 2.2 1.2"></a-entity>
+      <a-entity light="type: point; color: #ff7e73; intensity: 0.7; distance: 8" position="1.3 1.5 1.3"></a-entity>
       <a-entity camera></a-entity>
     </a-scene>
   </div>
@@ -31,8 +33,11 @@
     let selectedDeviceId = null;
     let simulationStarted = false;
     let exosomeTimer = null;
+    let antibodyTimer = null;
     const targetCells = [];
     const exosomes = [];
+    const antibodies = [];
+    const bloodParticles = [];
     const sourceCellProfile = {
       radius: 0.52
     };
@@ -50,6 +55,23 @@
       return { x, y, z };
     }
 
+    function randomInVessel(radius) {
+      const angle = randomRange(0, Math.PI * 2);
+      const r = Math.sqrt(Math.random()) * radius;
+      return { x: Math.cos(angle) * r, y: 0.9 + Math.sin(angle) * r };
+    }
+
+    function setMaterialColor(entity, color, opacity) {
+      const previous = entity.getAttribute('material') || {};
+      const merged = {
+        ...previous,
+        color,
+        opacity,
+        transparent: true
+      };
+      entity.setAttribute('material', merged);
+    }
+
     function buildCell(cellEntity, options = {}) {
       const radius = options.radius || 0.5;
       const bumps = options.bumps || 30;
@@ -63,7 +85,7 @@
       membraneOuter.setAttribute('radius', radius);
       membraneOuter.setAttribute(
         'material',
-        'color: #f7db63; transparent: true; opacity: 0.44; roughness: 0.48; metalness: 0.02; side: double;'
+        'color: #f2f9ff; transparent: true; opacity: 0.44; roughness: 0.42; metalness: 0.02; side: double;'
       );
       membraneOuter.setAttribute(
         'animation__membrane',
@@ -75,7 +97,7 @@
       membraneInner.setAttribute('radius', Math.max(radius - membraneThickness, radius * 0.9));
       membraneInner.setAttribute(
         'material',
-        'color: #ffe886; transparent: true; opacity: 0.3; roughness: 0.7; metalness: 0.01; side: double;'
+        'color: #dbeefe; transparent: true; opacity: 0.32; roughness: 0.7; metalness: 0.01; side: double;'
       );
       cellEntity.appendChild(membraneInner);
 
@@ -83,7 +105,7 @@
       cytoplasm.setAttribute('radius', radius * 0.84);
       cytoplasm.setAttribute(
         'material',
-        'color: #fbeea2; transparent: true; opacity: 0.18; roughness: 0.95; metalness: 0;'
+        'color: #c8e0f7; transparent: true; opacity: 0.2; roughness: 0.95; metalness: 0;'
       );
       cellEntity.appendChild(cytoplasm);
 
@@ -96,7 +118,7 @@
       );
       nucleus.setAttribute(
         'material',
-        'color: #f0c62f; transparent: true; opacity: 0.38; roughness: 0.55; metalness: 0.02;'
+        'color: #8cb1dc; transparent: true; opacity: 0.5; roughness: 0.55; metalness: 0.02;'
       );
       cellEntity.appendChild(nucleus);
 
@@ -105,7 +127,7 @@
       nucleolus.setAttribute('position', `${(radius * 0.05).toFixed(3)} ${(radius * 0.03).toFixed(3)} ${(radius * -0.04).toFixed(3)}`);
       nucleolus.setAttribute(
         'material',
-        'color: #e1b016; transparent: true; opacity: 0.55; roughness: 0.6; metalness: 0.01;'
+        'color: #6e93c2; transparent: true; opacity: 0.68; roughness: 0.6; metalness: 0.01;'
       );
       nucleus.appendChild(nucleolus);
 
@@ -121,11 +143,12 @@
         );
         vesicle.setAttribute(
           'material',
-          'color: #fff5bf; transparent: true; opacity: 0.2; roughness: 1; metalness: 0;'
+          'color: #eef7ff; transparent: true; opacity: 0.18; roughness: 1; metalness: 0;'
         );
         cellEntity.appendChild(vesicle);
       }
 
+      const bumpEntities = [];
       for (let i = 0; i < bumps; i++) {
         const dir = randomUnitVector();
         const bumpRadius = radius * randomRange(bumpScaleMin, bumpScaleMax);
@@ -139,10 +162,67 @@
         );
         bump.setAttribute(
           'material',
-          'color: #ebc637; transparent: true; opacity: 0.63; roughness: 0.65; metalness: 0.01;'
+          'color: #e7f3ff; transparent: true; opacity: 0.58; roughness: 0.6; metalness: 0.01;'
         );
         cellEntity.appendChild(bump);
+        bumpEntities.push(bump);
       }
+
+      cellEntity.__cellParts = {
+        membraneOuter,
+        membraneInner,
+        cytoplasm,
+        nucleus,
+        bumps: bumpEntities,
+        baseColors: {
+          membraneOuter: '#f2f9ff',
+          membraneInner: '#dbeefe',
+          cytoplasm: '#c8e0f7',
+          nucleus: '#8cb1dc',
+          bump: '#e7f3ff'
+        }
+      };
+    }
+
+    function setCellSignal(cell, signalType) {
+      const parts = cell.__cellParts;
+      if (!parts) {
+        return;
+      }
+
+      const exosomePalette = {
+        membraneOuter: '#c5f2ff',
+        membraneInner: '#d9f8ff',
+        cytoplasm: '#a8ddff',
+        nucleus: '#75b7f5',
+        bump: '#c1ebff'
+      };
+
+      const antibodyPalette = {
+        membraneOuter: '#ffd7f1',
+        membraneInner: '#ffe6f7',
+        cytoplasm: '#f4ddff',
+        nucleus: '#c791d7',
+        bump: '#ffd2ec'
+      };
+
+      const palette = signalType === 'antibody' ? antibodyPalette : exosomePalette;
+
+      setMaterialColor(parts.membraneOuter, palette.membraneOuter, 0.5);
+      setMaterialColor(parts.membraneInner, palette.membraneInner, 0.38);
+      setMaterialColor(parts.cytoplasm, palette.cytoplasm, 0.3);
+      setMaterialColor(parts.nucleus, palette.nucleus, 0.62);
+      parts.bumps.forEach(b => setMaterialColor(b, palette.bump, 0.72));
+
+      clearTimeout(cell.__signalTimeout);
+      cell.__signalTimeout = setTimeout(() => {
+        const base = parts.baseColors;
+        setMaterialColor(parts.membraneOuter, base.membraneOuter, 0.44);
+        setMaterialColor(parts.membraneInner, base.membraneInner, 0.32);
+        setMaterialColor(parts.cytoplasm, base.cytoplasm, 0.2);
+        setMaterialColor(parts.nucleus, base.nucleus, 0.5);
+        parts.bumps.forEach(b => setMaterialColor(b, base.bump, 0.58));
+      }, 820);
     }
 
     function getWorldPosition(entity) {
@@ -158,17 +238,17 @@
       );
     }
 
-    function createFusionGlow(position) {
+    function createFusionGlow(position, color = '#9fd0ff') {
       const scene = document.getElementById('ar-scene');
       const glow = document.createElement('a-sphere');
       glow.setAttribute('radius', 0.04);
       glow.setAttribute('position', `${position.x.toFixed(3)} ${position.y.toFixed(3)} ${position.z.toFixed(3)}`);
       glow.setAttribute(
         'material',
-        'color: #9fd0ff; transparent: true; opacity: 0.48; roughness: 0.18; metalness: 0.06; side: double;'
+        `color: ${color}; transparent: true; opacity: 0.5; roughness: 0.18; metalness: 0.06; side: double;`
       );
       glow.setAttribute('animation__expand', 'property: scale; from: 1 1 1; to: 3.6 3.6 3.6; dur: 260; easing: easeOutQuad;');
-      glow.setAttribute('animation__fade', 'property: material.opacity; from: 0.48; to: 0; dur: 260; easing: linear;');
+      glow.setAttribute('animation__fade', 'property: material.opacity; from: 0.5; to: 0; dur: 260; easing: linear;');
       scene.appendChild(glow);
       setTimeout(() => {
         if (glow.parentNode) {
@@ -206,6 +286,97 @@
         });
         container.appendChild(cell);
         targetCells.push(cell);
+      }
+    }
+
+    function createVesselShell() {
+      const bloodstream = document.getElementById('bloodstream');
+
+      const wallOuter = document.createElement('a-cylinder');
+      wallOuter.setAttribute('open-ended', 'true');
+      wallOuter.setAttribute('radius', 3.1);
+      wallOuter.setAttribute('height', 16);
+      wallOuter.setAttribute('rotation', '90 0 0');
+      wallOuter.setAttribute('position', '0 0.9 -3.7');
+      wallOuter.setAttribute('material', 'color: #671115; transparent: true; opacity: 0.12; side: double; roughness: 0.8; metalness: 0.02;');
+      bloodstream.appendChild(wallOuter);
+
+      const wallInner = document.createElement('a-cylinder');
+      wallInner.setAttribute('open-ended', 'true');
+      wallInner.setAttribute('radius', 2.7);
+      wallInner.setAttribute('height', 16);
+      wallInner.setAttribute('rotation', '90 0 0');
+      wallInner.setAttribute('position', '0 0.9 -3.7');
+      wallInner.setAttribute('material', 'color: #8e1b20; transparent: true; opacity: 0.08; side: back; roughness: 0.95; metalness: 0;');
+      wallInner.setAttribute(
+        'animation__pulse',
+        'property: material.opacity; from: 0.05; to: 0.1; dur: 2200; dir: alternate; loop: true; easing: easeInOutSine;'
+      );
+      bloodstream.appendChild(wallInner);
+    }
+
+    function spawnBloodParticle(type) {
+      const bloodstream = document.getElementById('bloodstream');
+      const particle = document.createElement('a-entity');
+
+      if (type === 'rbc') {
+        const disk = document.createElement('a-torus');
+        disk.setAttribute('radius', randomRange(0.07, 0.1).toFixed(3));
+        disk.setAttribute('radius-tubular', randomRange(0.018, 0.027).toFixed(3));
+        disk.setAttribute('segments-radial', '16');
+        disk.setAttribute('segments-tubular', '22');
+        disk.setAttribute('rotation', `${randomRange(60, 120).toFixed(2)} ${randomRange(0, 360).toFixed(2)} 0`);
+        disk.setAttribute('scale', `1 ${randomRange(0.55, 0.75).toFixed(3)} 1`);
+        disk.setAttribute('material', 'color: #c52f36; transparent: true; opacity: 0.72; roughness: 0.55; metalness: 0.01;');
+        particle.appendChild(disk);
+      } else {
+        const platelet = document.createElement('a-sphere');
+        platelet.setAttribute('radius', randomRange(0.03, 0.045).toFixed(3));
+        platelet.setAttribute('scale', `1 ${randomRange(0.45, 0.65).toFixed(3)} 1`);
+        platelet.setAttribute('material', 'color: #f4c88e; transparent: true; opacity: 0.68; roughness: 0.65; metalness: 0;');
+        particle.appendChild(platelet);
+      }
+
+      const startXY = randomInVessel(2.25);
+      const startZ = randomRange(-9.2, 1.6);
+      particle.object3D.position.set(startXY.x, startXY.y, startZ);
+      bloodstream.appendChild(particle);
+
+      bloodParticles.push({
+        el: particle,
+        type,
+        speed: type === 'rbc' ? randomRange(0.9, 1.55) : randomRange(1.05, 1.8),
+        spinX: randomRange(-32, 32),
+        spinY: randomRange(-40, 40),
+        phase: randomRange(0, Math.PI * 2)
+      });
+    }
+
+    function createBloodstreamFlow() {
+      createVesselShell();
+      for (let i = 0; i < 52; i++) {
+        spawnBloodParticle('rbc');
+      }
+      for (let i = 0; i < 28; i++) {
+        spawnBloodParticle('platelet');
+      }
+    }
+
+    function updateBloodFlow(deltaSec) {
+      for (let i = 0; i < bloodParticles.length; i++) {
+        const item = bloodParticles[i];
+        const pos = item.el.object3D.position;
+        pos.z += item.speed * deltaSec;
+        pos.x += Math.sin(performance.now() * 0.0007 + item.phase) * 0.0025;
+        pos.y += Math.cos(performance.now() * 0.00055 + item.phase * 0.7) * 0.0017;
+
+        item.el.object3D.rotation.x += THREE.MathUtils.degToRad(item.spinX * deltaSec);
+        item.el.object3D.rotation.y += THREE.MathUtils.degToRad(item.spinY * deltaSec);
+
+        if (pos.z > 2.1) {
+          const back = randomInVessel(2.25);
+          pos.set(back.x, back.y, randomRange(-9.2, -6.4));
+        }
       }
     }
 
@@ -274,8 +445,25 @@
         age: 0,
         state: 'travel',
         fusionProgress: 0,
+        neutralizeProgress: 0,
         wobble: randomRange(0.7, 1.25)
       });
+    }
+
+    function neutralizeExosome(exosomeItem) {
+      if (!exosomeItem || exosomeItem.state === 'neutralized') {
+        return false;
+      }
+      if (exosomeItem.state === 'fusion') {
+        return false;
+      }
+
+      exosomeItem.state = 'neutralized';
+      exosomeItem.shell.setAttribute(
+        'material',
+        'color: #7ef5e1; transparent: true; opacity: 0.72; roughness: 0.24; metalness: 0.06; side: double;'
+      );
+      return true;
     }
 
     function updateExosomes(deltaSec) {
@@ -300,14 +488,31 @@
         const dir = targetPos.clone().sub(pos);
         const distance = dir.length();
 
+        if (item.state === 'neutralized') {
+          item.neutralizeProgress += deltaSec * 1.9;
+          const scale = Math.max(0.1, 1 - item.neutralizeProgress);
+          item.el.object3D.scale.set(scale, scale, scale);
+          pos.y += deltaSec * 0.03;
+
+          if (item.neutralizeProgress > 1) {
+            createFusionGlow(pos, '#7ef5e1');
+            if (item.el.parentNode) {
+              item.el.parentNode.removeChild(item.el);
+            }
+            exosomes.splice(i, 1);
+          }
+          continue;
+        }
+
         if (item.state === 'travel' && distance < item.targetRadius + 0.12) {
           item.state = 'fusion';
         }
 
         if (item.state === 'fusion') {
           if (distance < item.targetRadius * 0.18 || item.fusionProgress > 1) {
-            createFusionGlow(targetPos);
+            createFusionGlow(targetPos, '#9fd0ff');
             pulseCell(item.target);
+            setCellSignal(item.target, 'exosome');
             if (item.el.parentNode) {
               item.el.parentNode.removeChild(item.el);
             }
@@ -339,6 +544,156 @@
       }
     }
 
+    function createAntibodyEntity() {
+      const antibody = document.createElement('a-entity');
+
+      const stem = document.createElement('a-cylinder');
+      stem.setAttribute('radius', 0.012);
+      stem.setAttribute('height', 0.11);
+      stem.setAttribute('position', '0 -0.03 0');
+      stem.setAttribute('material', 'color: #7ef5e1; transparent: true; opacity: 0.86; roughness: 0.3; metalness: 0.04;');
+      antibody.appendChild(stem);
+
+      const armLeft = document.createElement('a-cylinder');
+      armLeft.setAttribute('radius', 0.01);
+      armLeft.setAttribute('height', 0.08);
+      armLeft.setAttribute('position', '-0.03 0.03 0');
+      armLeft.setAttribute('rotation', '0 0 35');
+      armLeft.setAttribute('material', 'color: #86ffed; transparent: true; opacity: 0.82; roughness: 0.3; metalness: 0.04;');
+      antibody.appendChild(armLeft);
+
+      const armRight = document.createElement('a-cylinder');
+      armRight.setAttribute('radius', 0.01);
+      armRight.setAttribute('height', 0.08);
+      armRight.setAttribute('position', '0.03 0.03 0');
+      armRight.setAttribute('rotation', '0 0 -35');
+      armRight.setAttribute('material', 'color: #86ffed; transparent: true; opacity: 0.82; roughness: 0.3; metalness: 0.04;');
+      antibody.appendChild(armRight);
+
+      return antibody;
+    }
+
+    function pickTargetExosome() {
+      const candidates = exosomes.filter(x => x.state === 'travel');
+      if (candidates.length === 0) {
+        return null;
+      }
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+
+    function spawnAntibody() {
+      if (targetCells.length === 0) {
+        return;
+      }
+
+      const container = document.getElementById('immune-actors');
+      const antibodyEl = createAntibodyEntity();
+      const p = randomInVessel(2.3);
+      antibodyEl.object3D.position.set(p.x, p.y, randomRange(-8.8, -3.4));
+      antibodyEl.object3D.rotation.set(
+        randomRange(0, Math.PI),
+        randomRange(0, Math.PI),
+        randomRange(0, Math.PI)
+      );
+      container.appendChild(antibodyEl);
+
+      antibodies.push({
+        el: antibodyEl,
+        mode: Math.random() < 0.58 ? 'exosome' : 'cell',
+        targetExosome: null,
+        targetCell: null,
+        speed: randomRange(0.95, 1.45),
+        age: 0,
+        state: 'seeking',
+        attachOffset: new THREE.Vector3(randomRange(-0.05, 0.05), randomRange(-0.05, 0.05), randomRange(-0.05, 0.05)),
+        attachTime: 0,
+        attachDuration: randomRange(0.8, 1.6)
+      });
+    }
+
+    function updateAntibodies(deltaSec) {
+      for (let i = antibodies.length - 1; i >= 0; i--) {
+        const item = antibodies[i];
+        if (!item.el.parentNode) {
+          antibodies.splice(i, 1);
+          continue;
+        }
+
+        item.age += deltaSec;
+        if (item.age > 10) {
+          item.el.parentNode.removeChild(item.el);
+          antibodies.splice(i, 1);
+          continue;
+        }
+
+        const pos = item.el.object3D.position;
+        item.el.object3D.rotation.x += deltaSec * 0.9;
+        item.el.object3D.rotation.y += deltaSec * 0.6;
+
+        if (item.state === 'attached' && item.targetCell) {
+          item.attachTime += deltaSec;
+          const cellPos = getWorldPosition(item.targetCell);
+          const desired = cellPos.clone().add(item.attachOffset);
+          pos.lerp(desired, 0.16);
+
+          if (item.attachTime > item.attachDuration) {
+            item.el.parentNode.removeChild(item.el);
+            antibodies.splice(i, 1);
+          }
+          continue;
+        }
+
+        let targetPos = null;
+        if (item.mode === 'exosome') {
+          if (!item.targetExosome || item.targetExosome.state !== 'travel') {
+            item.targetExosome = pickTargetExosome();
+          }
+          if (item.targetExosome) {
+            targetPos = item.targetExosome.el.object3D.position.clone();
+          }
+        }
+
+        if (!targetPos) {
+          if (!item.targetCell || !item.targetCell.parentNode) {
+            item.targetCell = targetCells[Math.floor(Math.random() * targetCells.length)];
+          }
+          targetPos = getWorldPosition(item.targetCell);
+        }
+
+        const dir = targetPos.clone().sub(pos);
+        const dist = dir.length();
+
+        if (dist < 0.12) {
+          if (item.mode === 'exosome' && item.targetExosome && item.targetExosome.state === 'travel') {
+            const blocked = neutralizeExosome(item.targetExosome);
+            if (blocked) {
+              createFusionGlow(targetPos, '#7ef5e1');
+            }
+            item.el.parentNode.removeChild(item.el);
+            antibodies.splice(i, 1);
+            continue;
+          }
+
+          if (item.targetCell) {
+            setCellSignal(item.targetCell, 'antibody');
+            pulseCell(item.targetCell);
+            item.state = 'attached';
+            item.attachTime = 0;
+            continue;
+          }
+        }
+
+        dir.normalize();
+        pos.add(dir.multiplyScalar(item.speed * deltaSec));
+        pos.z += 0.2 * deltaSec;
+
+        if (pos.z > 2.4) {
+          const back = randomInVessel(2.2);
+          pos.set(back.x, back.y, randomRange(-8.5, -6.8));
+        }
+      }
+    }
+
     function startSimulation() {
       if (simulationStarted) {
         return;
@@ -356,13 +711,17 @@
       });
 
       spawnBackgroundCells();
+      createBloodstreamFlow();
       exosomeTimer = setInterval(spawnExosome, 420);
+      antibodyTimer = setInterval(spawnAntibody, 980);
 
       let previousTime = performance.now();
       function animate(now) {
         const deltaSec = Math.min((now - previousTime) / 1000, 0.05);
         previousTime = now;
+        updateBloodFlow(deltaSec);
         updateExosomes(deltaSec);
+        updateAntibodies(deltaSec);
         requestAnimationFrame(animate);
       }
       requestAnimationFrame(animate);
