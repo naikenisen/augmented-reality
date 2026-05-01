@@ -320,15 +320,42 @@
       const particle = document.createElement('a-entity');
 
       if (type === 'rbc') {
-        const disk = document.createElement('a-torus');
-        disk.setAttribute('radius', randomRange(0.07, 0.1).toFixed(3));
-        disk.setAttribute('radius-tubular', randomRange(0.018, 0.027).toFixed(3));
-        disk.setAttribute('segments-radial', '16');
-        disk.setAttribute('segments-tubular', '22');
-        disk.setAttribute('rotation', `${randomRange(60, 120).toFixed(2)} ${randomRange(0, 360).toFixed(2)} 0`);
-        disk.setAttribute('scale', `1 ${randomRange(0.55, 0.75).toFixed(3)} 1`);
-        disk.setAttribute('material', 'color: #c52f36; transparent: true; opacity: 0.72; roughness: 0.55; metalness: 0.01;');
-        particle.appendChild(disk);
+        const rbcRadius = randomRange(0.074, 0.098);
+        // Biconcave profile: hc = demi-épaisseur au centre (creux), hr = demi-épaisseur au bourrelet
+        const hc = rbcRadius * 0.13;
+        const hr = rbcRadius * 0.30;
+        // Points du profil de coupe (r, y) tournés à 360° par LatheGeometry
+        // Surface supérieure (centre → bord) puis inférieure (bord → centre)
+        const pts = [
+          new THREE.Vector2(0,                  hc),
+          new THREE.Vector2(rbcRadius * 0.22,   hc * 0.86),
+          new THREE.Vector2(rbcRadius * 0.46,   hc * 1.48),
+          new THREE.Vector2(rbcRadius * 0.70,   hr),
+          new THREE.Vector2(rbcRadius * 0.87,   hr * 0.86),
+          new THREE.Vector2(rbcRadius,          hr * 0.60),
+          new THREE.Vector2(rbcRadius,         -hr * 0.60),
+          new THREE.Vector2(rbcRadius * 0.87,  -hr * 0.86),
+          new THREE.Vector2(rbcRadius * 0.70,  -hr),
+          new THREE.Vector2(rbcRadius * 0.46,  -hc * 1.48),
+          new THREE.Vector2(rbcRadius * 0.22,  -hc * 0.86),
+          new THREE.Vector2(0,                 -hc),
+        ];
+        const geo = new THREE.LatheGeometry(pts, 32);
+        const mat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color('#c52f36'),
+          transparent: true,
+          opacity: 0.74,
+          roughness: 0.55,
+          metalness: 0.01,
+          side: THREE.DoubleSide
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        particle.object3D.add(mesh);
+        particle.object3D.rotation.set(
+          THREE.MathUtils.degToRad(randomRange(0, 360)),
+          THREE.MathUtils.degToRad(randomRange(0, 360)),
+          THREE.MathUtils.degToRad(randomRange(0, 360))
+        );
       } else {
         const platelet = document.createElement('a-sphere');
         platelet.setAttribute('radius', randomRange(0.03, 0.045).toFixed(3));
@@ -445,20 +472,21 @@
         age: 0,
         state: 'travel',
         fusionProgress: 0,
-        neutralizeProgress: 0,
-        wobble: randomRange(0.7, 1.25)
+        wobble: randomRange(0.7, 1.25),
+        blockedFlowSpeed: randomRange(0.44, 0.78)
       });
     }
 
     function neutralizeExosome(exosomeItem) {
-      if (!exosomeItem || exosomeItem.state === 'neutralized') {
+      if (!exosomeItem || exosomeItem.state === 'blocked') {
         return false;
       }
       if (exosomeItem.state === 'fusion') {
         return false;
       }
 
-      exosomeItem.state = 'neutralized';
+      exosomeItem.state = 'blocked';
+      exosomeItem.target = null;
       exosomeItem.shell.setAttribute(
         'material',
         'color: #7ef5e1; transparent: true; opacity: 0.72; roughness: 0.24; metalness: 0.06; side: double;'
@@ -475,7 +503,8 @@
         }
 
         item.age += deltaSec;
-        if (item.age > 11) {
+        const maxAge = item.state === 'blocked' ? 17 : 11;
+        if (item.age > maxAge) {
           if (item.el.parentNode) {
             item.el.parentNode.removeChild(item.el);
           }
@@ -483,26 +512,25 @@
           continue;
         }
 
-        const targetPos = getWorldPosition(item.target);
         const pos = item.el.object3D.position;
-        const dir = targetPos.clone().sub(pos);
-        const distance = dir.length();
 
-        if (item.state === 'neutralized') {
-          item.neutralizeProgress += deltaSec * 1.9;
-          const scale = Math.max(0.1, 1 - item.neutralizeProgress);
-          item.el.object3D.scale.set(scale, scale, scale);
-          pos.y += deltaSec * 0.03;
+        if (item.state === 'blocked') {
+          pos.z += item.blockedFlowSpeed * deltaSec;
+          pos.x += Math.sin(item.age * 6.2 + item.phase) * 0.0022;
+          pos.y += Math.cos(item.age * 5.4 + item.phase * 0.8) * 0.0017;
+          item.el.object3D.rotation.x += deltaSec * 0.8;
+          item.el.object3D.rotation.y += deltaSec * 0.5;
 
-          if (item.neutralizeProgress > 1) {
-            createFusionGlow(pos, '#7ef5e1');
-            if (item.el.parentNode) {
-              item.el.parentNode.removeChild(item.el);
-            }
-            exosomes.splice(i, 1);
+          if (pos.z > 2.5) {
+            const back = randomInVessel(2.2);
+            pos.set(back.x, back.y, randomRange(-9.1, -7.2));
           }
           continue;
         }
+
+        const targetPos = getWorldPosition(item.target);
+        const dir = targetPos.clone().sub(pos);
+        const distance = dir.length();
 
         if (item.state === 'travel' && distance < item.targetRadius + 0.12) {
           item.state = 'fusion';
@@ -601,6 +629,7 @@
         el: antibodyEl,
         mode: Math.random() < 0.58 ? 'exosome' : 'cell',
         targetExosome: null,
+        boundExosome: null,
         targetCell: null,
         speed: randomRange(0.95, 1.45),
         age: 0,
@@ -620,7 +649,8 @@
         }
 
         item.age += deltaSec;
-        if (item.age > 10) {
+        const maxAge = item.state === 'bound-exosome' ? 17 : 10;
+        if (item.age > maxAge) {
           item.el.parentNode.removeChild(item.el);
           antibodies.splice(i, 1);
           continue;
@@ -629,6 +659,20 @@
         const pos = item.el.object3D.position;
         item.el.object3D.rotation.x += deltaSec * 0.9;
         item.el.object3D.rotation.y += deltaSec * 0.6;
+
+        if (item.state === 'bound-exosome') {
+          const exo = item.boundExosome;
+          if (!exo || !exo.el || !exo.el.parentNode) {
+            item.el.parentNode.removeChild(item.el);
+            antibodies.splice(i, 1);
+            continue;
+          }
+
+          const exoPos = exo.el.object3D.position;
+          const boundTarget = exoPos.clone().add(item.attachOffset);
+          pos.lerp(boundTarget, 0.26);
+          continue;
+        }
 
         if (item.state === 'attached' && item.targetCell) {
           item.attachTime += deltaSec;
@@ -668,10 +712,15 @@
             const blocked = neutralizeExosome(item.targetExosome);
             if (blocked) {
               createFusionGlow(targetPos, '#7ef5e1');
+              item.state = 'bound-exosome';
+              item.boundExosome = item.targetExosome;
+              item.attachOffset = new THREE.Vector3(
+                randomRange(-0.022, 0.022),
+                randomRange(-0.022, 0.022),
+                randomRange(-0.022, 0.022)
+              );
+              continue;
             }
-            item.el.parentNode.removeChild(item.el);
-            antibodies.splice(i, 1);
-            continue;
           }
 
           if (item.targetCell) {
